@@ -12,7 +12,9 @@ https://data.cityofchicago.org/Transportation/Divy_daily_duration/3hs6-p2qv
 * Frequency Transform: Aggregate daily data into weekly data
 
 ### Train-Test Split
-* Train Period: 6/30/2013 – 12/31/2018 (287 weeks)
+```diff
+- * Train Period: 6/30/2013 – 12/31/2018 (287 weeks)
+```
 * <span style="color:red;">Test Period:</span> 1/1/2019 – 12/31/2019 (52 weeks)
 
 
