@@ -1,0 +1,593 @@
+---
+title: "Divvy Bike Weekly Usage Forecast"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+load the package:
+```{r}
+library(fpp)
+library(TSA)
+library(tseries)
+library(ggplot2)
+library(forecast)
+library(car)
+library(MLmetrics)
+library(vars)
+```
+
+## Part 1: Data Processing
+
+Import Divvy Bike data:
+
+```{r}
+divvy_data <- read.csv('/Users/Xingkang/Desktop/divvy_data.csv')
+divvy<-divvy_data$duration
+```
+
+Start aggregate the data by weekly basis
+
+```{r}
+divvy_agg <- c()
+l <- (length(divvy)-6)/7
+
+
+for (i in 1:l){
+  a <- (i-1)*7+1+3 # since the start day is Thursday and end day is Tuesday, we do not use the first and last three days in the dataset.
+  b <- i*7+3
+  c <- sum(divvy[a:b])
+  #divvy_agg <- c(divvy_agg,c)
+  divvy_agg[i] = c
+}
+```
+
+From 2013/06/30 Sunday to 2019/12/28 Saturday; In total 339 weeks
+
+Plot the aggreated data
+```{r}
+divvy_agg_weekly <- ts(divvy_agg, start=c(2013,26),frequency=52)
+divvy_agg_weekly
+tsdisplay(divvy_agg_weekly)
+```
+
+
+Split Train and Test (287 Weeks for Train; 52 Weeks for Test)
+
+```{r}
+train_divvy <- window(divvy_agg_weekly,start=c(2013,26),end=c(2018,52))
+test_divvy <- window(divvy_agg_weekly,start=c(2019,1),end=c(2019,52)) 
+```
+
+
+Import Weather Data and Split it the same way as Divvy Bike data
+
+```{r}
+weather <- read.csv('/Users/Xingkang/Desktop/weather_data.csv')
+
+temperature <- ts(weather$avg_temp,start=c(2013,26),frequency=52)
+precipitation <- ts(weather$sum_pre,start=c(2013,26),frequency=52)
+snowdepth <- ts(weather$sum_snow,start=c(2013,26),frequency=52)
+windspeed <- ts(weather$avg_wind,start=c(2013,26),frequency=52)
+
+train_temp <- window(temperature,start=c(2013,26),end=c(2018,52))
+train_pre <- window(precipitation,start=c(2013,26),end=c(2018,52))
+train_snow <- window(snowdepth,start=c(2013,26),end=c(2018,52))
+train_wind <- window(windspeed,start=c(2013,26),end=c(2018,52))
+
+test_temp <- window(temperature,start=c(2019,1),end=c(2019,52))
+```
+
+Plot each of the 4 variables in weather dataset
+
+```{r}
+plot(train_temp)
+```
+
+```{r}
+plot(train_wind)
+```
+
+```{r}
+plot(train_pre)
+```
+
+```{r}
+plot(train_snow)
+```
+
+
+## Part 2: EDA
+
+```{r}
+divvy_agg_weekly <- ts(divvy_agg, start=c(2013,26),frequency=52)
+tsdisplay(divvy_agg_weekly)
+```
+
+```{r}
+length(divvy_agg_weekly)
+str(divvy_agg_weekly)
+```
+
+Time Series Decomposition Plots
+
+```{r}
+divvy_agg_weekly%>% mstl() %>%
+  autoplot() + xlab("Daily Duration")
+```
+
+Seasonal Subseries Plots
+
+```{r}
+ggsubseriesplot(divvy_agg_weekly) +
+  ylab("Duration") +
+  ggtitle("Seasonal subseries plot: Divvy Weekly Duration")
+```
+
+
+```{r}
+ggseasonplot(divvy_agg_weekly) +
+  ylab("Duration") +
+  ggtitle("Seasonal plot: Divvy Daily Duration")
+```
+
+
+Box-Cox transformation
+
+```{r}
+BoxCox.lambda(train_divvy)
+```
+
+```{r}
+train_divvy_boxcox <- BoxCox(train_divvy,lambda = 0.03489689)
+plot(train_divvy_boxcox,plot.type="single", col=1:2, xlab="Year")
+tsdisplay(train_divvy_boxcox)
+```
+
+Check if trend stationary
+
+```{r}
+kpss.test(train_divvy_boxcox) ## small p; not trend stationary
+```
+
+p-value < 0.05, the null hypothesis of trend being stationary is rejected.
+Therefore, we apply seasonal differencing.
+
+```{r}
+train_divvy_boxcox_seadiff <- diff(train_divvy_boxcox,lag=52)
+```
+
+Check again if the transformed series is stationary.
+
+```{r}
+kpss.test(train_divvy_boxcox_seadiff) 
+```
+
+small p; trend not stationary after D=1, then we try first order differencing.
+
+```{r}
+train_divvy_boxcox_seadiff_diff <- diff(train_divvy_boxcox_seadiff)
+```
+
+Check again if the transformed series is stationary.
+
+```{r}
+kpss.test(train_divvy_boxcox_seadiff_diff) 
+```
+
+large p; trend stationary; d=1
+
+```{r}
+tsdisplay(train_divvy_boxcox_seadiff_diff)
+```
+
+The divvy bike sereis needs seasonal differencing of lag = 52 and the first order differencing.
+
+
+Check correlation between weather variables and divvy useage
+
+```{r}
+cor(train_temp,train_divvy)
+```
+
+```{r}
+cor(train_pre,train_divvy)
+```
+
+```{r}
+cor(train_wind,train_divvy)
+```
+
+```{r}
+cor(train_snow,train_divvy)
+```
+
+The "divvy vs avg_temp" has a high positive correlation. The second highest correlation is "divvy vs avg_wind", which has a negative correlation. However, its Pearson r is only 0.48, indicating that the correlation is not significant. Therefore, we would only use temperature as additional variable going forward
+
+
+## Part 3: Seasonal Naive
+
+Build Model and get prediction
+
+```{r}
+model_snaive <- snaive(train_divvy,h=52)
+
+pred_snaive <- model_snaive$mean
+```
+
+Check residuals
+
+```{r}
+checkresiduals(model_snaive)
+```
+
+
+Make forecast and compare it with the actual test data
+
+```{r}
+plot(test_divvy)
+lines(pred_snaive,col='red')
+legend('topleft',legend =c('pred_snaive','actual'),col=c('red','black'),lty=1)
+```
+
+Calculate MAPE
+
+```{r}
+MAPE(pred_snaive,test_divvy)
+```
+
+
+## Part 4: Seasonal ARIMA
+
+Build Model with auto.arima
+
+```{r}
+arima <- auto.arima(train_divvy,seasonal = 'TRUE', lambda = 'auto',trace=TRUE,approximation = FALSE)
+arima
+```
+(4,1,3) (1,1,0) period=52
+
+Check residuals
+
+```{r}
+checkresiduals(arima)
+```
+
+P=0.0574; Barely not reject the null hypothesis
+
+
+Make Predictions and Compare with the actual test data
+
+```{r}
+pred_arima <- forecast(arima,h=52)
+plot(test_divvy)
+lines(pred_arima$mean,col='red')
+legend('topleft',legend =c('pred_arima','actual'),col=c('red','black'),lty=1)
+```
+
+Calculate MAPE
+
+```{r}
+MAPE(pred_arima$mean,test_divvy)
+```
+
+
+## Part 5: Regression with ARIMA error (with Temp)
+
+Plot temp data and see if Boxcox is needed
+
+```{r}
+plot(train_temp)
+```
+
+No need for BoxCox
+
+Use Seasonal Diff and First Order Diff to remove and Seasonality and make it trend stationary 
+
+```{r}
+train_temp_seadiff_diff <- diff(diff(train_temp,lag=52))
+
+plot(train_temp_seadiff_diff)
+
+kpss.test(train_temp_seadiff_diff)
+```
+
+larger p indicating trend is stationary
+
+Prepare new training data for model fitting
+
+```{r}
+train_divvy_new <- train_divvy[54:287]
+
+train_divvy_new <- ts(train_divvy_new,frequency = 52,start=c(2014,27))
+```
+
+Fit model using xreg = train_temp_seadiff_diff (stationary)
+
+```{r}
+model_arimae <- auto.arima(train_divvy_new,xreg=train_temp_seadiff_diff,lambda = 0.0349,d=1,D=1)
+model_arimae
+```
+
+Check Residuals
+
+```{r}
+checkresiduals(model_arimae)
+```
+
+Make Predictions and Compare with the actual test data
+
+
+```{r}
+test_temp_new <- c(train_temp[235:287],test_temp)
+pred_arimae <- forecast(model_arimae,xreg=diff(diff(test_temp_new,lag=52)),h=52)
+plot(test_divvy)
+lines(pred_arimae$mean,col='red')
+legend('topleft',legend =c('pred_arimae','actual'),col=c('red','black'),lty=1)
+```
+
+Calculate MAPE
+
+```{r}
+MAPE(pred_arimae$mean,test_divvy)
+```
+
+
+## Part 6: Vector AutoRegression (VAR)
+
+```{r}
+library(vars)
+data = cbind(divvy=train_divvy,temp=train_temp)
+```
+
+Check what lag order is appropriate for VAR model
+
+```{r}
+VARselect(data,lag.max=5,type='both')$selection
+```
+
+Fit model with lag = 1 and check residual independence
+
+```{r}
+var1 <- VAR(data,p=1,type='both',season = 52)
+
+serial.test(var1,lags.pt=10,type='PT.asymptotic')
+acf(residuals(var1))
+```
+
+Fit model with lag = 3 and check residual independence
+
+```{r}
+var2 <- VAR(data,p=3,type='both',season = 52)
+
+serial.test(var2,lags.pt=10,type='PT.asymptotic')
+acf(residuals(var2))
+```
+
+
+In both cases, residuals are not white noise due to small p values from serial test and spike in acf.
+
+
+Make predictions and Compare with the actual test data for both models
+
+```{r}
+pred_var1 <- forecast(var1,h=52)
+pred_var2 <- forecast(var2,h=52)
+```
+
+```{r}
+plot(pred_var1$forecast$divvy)
+```
+
+```{r}
+plot(pred_var2$forecast$divvy)
+```
+
+```{r}
+MAPE(pred_var1$forecast$divvy$mean,test_divvy)
+```
+
+```{r}
+MAPE(pred_var2$forecast$divvy$mean,test_divvy)
+```
+
+
+## Part 7: Fourier Transform
+
+Let's first check the periodogram of train_divvy dataset.
+
+```{r}
+kpss.test(train_divvy_boxcox)
+```
+
+```{r}
+adf.test(train_divvy_boxcox)
+```
+
+The Kpss test shows that the series is trend stationary (p>0.05).
+
+The adf test shows that the data is stationary (p<0.05).
+
+```{r}
+periodogram(train_divvy_boxcox)
+temp <- periodogram(train_divvy_boxcox)
+```
+
+```{r}
+temp$freq
+```
+
+
+```{r}
+Max_freq <- temp$freq[which.max(temp$spec)]
+1/Max_freq
+```
+
+The highest two periodogram fall on frequency 0.017361111 and 0.020833333, which is 57.6 weeks and 48 weeks.
+
+Plot STL to show the important seasonality in this data.
+
+```{r}
+autoplot(mstl(train_divvy))
+```
+
+The 52 persiod is the most significant seasonality in this dataset.
+
+Combine Fourier terms with ARIMA errors
+
+#### K=3
+
+```{r}
+arima_fourier_3 <- auto.arima(train_divvy, xreg=fourier(train_divvy,3), seasonal=FALSE,lambda = "auto")
+arima_fourier_forecast_3 <- forecast(arima_fourier_3, xreg=fourier(train_divvy, 3, 52))
+plot(arima_fourier_forecast_3)
+```
+
+```{r}
+summary(arima_fourier_3)
+```
+
+```{r}
+checkresiduals(arima_fourier_3)
+```
+
+#### K=13
+
+```{r}
+arima_fourier_13 <- auto.arima(train_divvy, xreg=fourier(train_divvy,13), seasonal=FALSE,lambda = "auto")
+arima_fourier_forecast_13 <- forecast(arima_fourier_13, xreg=fourier(train_divvy, 13, 52))
+plot(arima_fourier_forecast_13)
+```
+
+The forecast now looks more reasonable.
+
+```{r}
+summary(arima_fourier_13)
+```
+
+Let's check the residual of the model
+
+```{r}
+checkresiduals(arima_fourier_13)
+```
+
+Let's tune the parameter K=9.
+
+```{r}
+arima_fourier_9 <- auto.arima(train_divvy, xreg=fourier(train_divvy,9), seasonal=FALSE,lambda = "auto")
+arima_fourier_forecast_9 <- forecast(arima_fourier_9, xreg=fourier(train_divvy, 9, 52))
+plot(arima_fourier_forecast_9)
+```
+
+```{r}
+summary(arima_fourier_9)
+```
+
+```{r}
+checkresiduals(arima_fourier_9)
+```
+
+We found that when K=9, the AICc is the smallest. (AICc=494.57). However, as the K gets larger, the auto-correlation in the residual becomes more significant. When K=9, the Ljun Box test indicates that there is auto-correlation in its residual. We should try some other parameter.
+
+```{r}
+plot(test_divvy,col=1,xlab="Year", ylab="Trip Duration")
+lines(arima_fourier_forecast_9$mean,col=2)
+legend('topleft',legend =c('Actual','Prediction'),col=1:2,lty=1)
+```
+
+```{r}
+MAPE(y_pred=arima_fourier_forecast_9$mean,y_true=test_divvy)
+```
+
+```{r}
+par(mfrow=c(3,1))
+plot(arima_fourier_forecast_3, main='K = 3')
+plot(arima_fourier_forecast_9, main='K = 9')
+plot(arima_fourier_forecast_13, main='K = 13')
+```
+
+## Part 8: TBATS
+
+
+```{r}
+tbats_model <- tbats(train_divvy_boxcox,seasonal.period=52)
+tbats_model
+```
+
+Check residual
+
+```{r}
+checkresiduals(tbats_model)
+```
+
+Reverse the BoxCox transformation
+
+```{r}
+tbats_model_forecasts <- forecast(tbats_model,h=52)
+forecasts_invboxcox <- InvBoxCox(tbats_model_forecasts$mean,lambda=0.03489689)
+```
+
+
+```{r}
+autoplot(train_divvy) +
+  autolayer((forecasts_invboxcox), series="Forecast") +
+  xlab("Year") + ylab("Usage in Sec")
+```
+
+```{r}
+plot(test_divvy,col=1,xlab="Year", ylab="Trip Duration")
+lines(forecasts_invboxcox,col=2)
+legend('topleft',legend =c('Actual','Forecast'),col=1:2,lty=1)
+```
+
+```{r}
+MAPE(y_pred=forecasts_invboxcox,y_true=test_divvy)
+```
+
+## Part 9: Neural Network Autoregression
+
+```{r}
+nnetar_model <- nnetar(train_divvy,lambda=0)
+nnetar_model
+```
+
+Check residual
+
+```{r}
+checkresiduals(nnetar_model$residuals)
+```
+```{r}
+shapiro.test(nnetar_model$residuals)
+```
+
+```{r}
+qqnorm(nnetar_model$residuals,main=expression(Normal~~Q-Q~~Plot))
+qqline(nnetar_model$residuals)
+```
+
+```{r}
+Box.test(nnetar_model$residuals,lag=52,type = c("Ljung-Box"),fitdf=41)
+```
+
+## Part 10: ETS
+
+Build model
+
+```{r}
+ets_fit <- stlf(train_divvy)
+summary(ets_fit)
+```
+
+Check residuals
+
+```{r}
+checkresiduals(ets_fit)
+```
+
+Calculate MAPE
+```{r}
+MAPE(ets_fit$mean,test_divvy)
+```
+
