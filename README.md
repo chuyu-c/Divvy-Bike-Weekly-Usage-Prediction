@@ -21,7 +21,7 @@ https://data.cityofchicago.org/Transportation/Divy_daily_duration/3hs6-p2qv
 * In addition, we hope to measure the bike transportation activity and have a better understanding of the mobility in a city
 
 ## Structure of Code
-* Bike Weekly Usage Forecast.R
+* Bike Weekly Usage Forecast.rmd
 * Bike Weekly Usage Forecast.html 
 
 ## Reference
