@@ -1,7 +1,7 @@
 # Divvy Bike Weekly Usage Time Series Prediction using R
 
 ## Data Source
-City of Chicago Data Portal
+City of Chicago Data Portal  
 https://data.cityofchicago.org/Transportation/Divy_daily_duration/3hs6-p2qv
 
 ## Data Description & Preprocessing
